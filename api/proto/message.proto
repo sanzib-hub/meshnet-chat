@@ -1,0 +1,61 @@
+syntax = "proto3";
+
+package messenger;
+
+option go_package = "github.com/yourorg/p2p-messenger/pkg/protocol;
+
+enum MessageType {
+    TEXT = 0;
+    MEDIA = 1;
+    SYSTEM = 2;
+}
+
+
+message Message{
+    string id = 1;
+    string sender_id = 2;
+    string receiver_id = 3;
+    MessageType type = 4;
+    string content = 5;
+    int64 timestamp = 6;
+    string room_id = 7;
+    map<string, string> metadata = 8;
+}
+
+message MessageEnvelope {
+    string protocol_version = 1;
+    Message message = 2;
+    string signature = 3;
+}
+
+message WebSocketMessage {
+    string type = 1;
+    oneof payload {
+        Message message = 2;
+        PeerList peers = 3;
+        ConnectionStatus status = 4;
+        ErrorMessage error = 5;
+    }
+}
+
+message PeerInfo {
+    string id =1;
+    string name = 2;
+    bool online = 3;
+    int54 last_seen = 4;
+}
+
+message PeerList {
+    repeated PeerInfo peers = 1;
+}
+
+message ConnectionStatus {
+    bool connected = 1;
+    int32 peer_count = 2;
+    string node_id = 3;
+}
+
+message ErrorMessage{
+    string code = 1;
+    string message = 2;
+}
