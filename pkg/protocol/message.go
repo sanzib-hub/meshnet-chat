@@ -46,7 +46,7 @@ type PeerList struct {
 }
 
 type ConnectionStatus struct{
-	Connected bool `json:"connected`
+	Connected bool `json:"connected"`
 	PeerCount int `json:"peer_count"`
 	NodeID string `json:"node_id"`
 }
@@ -76,5 +76,19 @@ func DeserializeEnvelope(data []byte) (*MessageEnvelope, error){
 }
 
 func CreateEnvelop(msg *message.Message) *MessageEnvelope{
-	
+	return &MessageEnvelope{
+		ProtocolVersion: ProtocolVersion,
+		Message: msg,
+	}
+}
+
+func NewWebSocketMessage(msgType WebSocketMessageType, payload interface{}) *WebSocketMessage{
+	return  &WebSocketMessage{
+		Type: msgType,
+		Payload: payload,
+	}
+}
+
+func (w *WebSocketMessage) Serialize() ([]byte, error){
+	return json.Marshal(w)
 }
