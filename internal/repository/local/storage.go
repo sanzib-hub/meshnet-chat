@@ -40,12 +40,10 @@ func (s *MessageStorage) StoreMessage(msg *message.Message) error {
 	defer s.mu.Unlock()
 
 	key := s.getConversationKey(msg.SenderID, msg.ReceiverID)
-
 	s.cache[key] = append(s.cache[key], msg)
 
 	sort.Slice(s.cache[key], func(i, j int) bool {
 		return s.cache[key][i].Timestamp.Before(s.cache[key][j].Timestamp)
-
 	})
 
 	return s.saveToDisk(key)
@@ -56,6 +54,7 @@ func (s *MessageStorage) GetMessages(peerID1, peerID2 string, limit int) ([]*mes
 	defer s.mu.RUnlock()
 
 	key := s.getConversationKey(peerID1, peerID2)
+	messages := s.cache[key]
 
 	messages := s.cache[key]
 

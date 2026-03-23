@@ -26,14 +26,15 @@ type Message struct {
 	MetaData map[string]string `json:"metadata"`
 }
 
-func NewMessage(senderID, receiverID, content string) *Message{
+func NewMessage(senderID, receiverID, content string) *Message {
 	return &Message{
-		ID: uuid.New().String(),
-		SenderID: senderID,
+		ID:         uuid.New().String(),
+		SenderID:   senderID,
 		ReceiverID: receiverID,
-		Type: TextMessage,
-		Content: content,
-		MetaData: make(map[string]string),
+		Type:       TextMessage,
+		Content:    content,
+		Timestamp:  time.Now(),
+		MetaData:   make(map[string]string),
 	}
 }
 
