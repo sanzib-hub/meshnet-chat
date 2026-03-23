@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/yourorg/p2p-messenger/internal/domain/message"
 )
@@ -28,7 +29,7 @@ func NewMessageStorage(dataDir string) (*MessageStorage, error) {
 	}
 
 	if err := storage.loadFromDisk(); err != nil {
-		return nil, fmt.Errorf("failed to load messages from disk: %w", err)
+		return nil, fmt.Errorf("failed to load message from disk: %w", err)
 	}
 
 	return storage, nil
@@ -55,6 +56,8 @@ func (s *MessageStorage) GetMessages(peerID1, peerID2 string, limit int) ([]*mes
 	key := s.getConversationKey(peerID1, peerID2)
 	messages := s.cache[key]
 
+	messages := s.cache[key]
+
 	if limit > 0 && len(messages) > limit {
 		start := len(messages) - limit
 		return messages[start:], nil
@@ -64,7 +67,7 @@ func (s *MessageStorage) GetMessages(peerID1, peerID2 string, limit int) ([]*mes
 }
 
 func (s *MessageStorage) GetRecentMessages(limit int) ([]*message.Message, error) {
-	s.mu.RLock()
+	s.mu.Lock()
 	defer s.mu.RUnlock()
 
 	var allMessages []*message.Message
@@ -74,6 +77,7 @@ func (s *MessageStorage) GetRecentMessages(limit int) ([]*message.Message, error
 
 	sort.Slice(allMessages, func(i, j int) bool {
 		return allMessages[i].Timestamp.After(allMessages[j].Timestamp)
+
 	})
 
 	if limit > 0 && len(allMessages) > limit {
@@ -84,7 +88,7 @@ func (s *MessageStorage) GetRecentMessages(limit int) ([]*message.Message, error
 }
 
 func (s *MessageStorage) GetConversations() ([]string, error) {
-	s.mu.RLock()
+	s.mu.Lock()
 	defer s.mu.RUnlock()
 
 	conversations := make([]string, 0, len(s.cache))
@@ -108,7 +112,7 @@ func (s *MessageStorage) saveToDisk(conversationKey string) error {
 	}
 
 	filename := filepath.Join(s.dataDir, fmt.Sprintf("%s.json", conversationKey))
-	data, err := json.MarshalIndent(messages, "", "  ")
+	data, err := json.MarshalIndent(messages, "", " ")
 	if err != nil {
 		return fmt.Errorf("failed to marshal messages: %w", err)
 	}
@@ -117,33 +121,66 @@ func (s *MessageStorage) saveToDisk(conversationKey string) error {
 }
 
 func (s *MessageStorage) loadFromDisk() error {
-	entries, err := os.ReadDir(s.dataDir)
+	files, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		return fmt.Errorf("failed to read data directory: %w", err)
+	}
+	for _, file := range files {
+		if !file.IsDir() && filepath.Ext(file.Name()) == ".json" {
+			conversationKey := file.Name()[:len(file.Name())-5]
+			if err := s.loadConversation(conversationKey); err != nil {
+				return fmt.Errorf("failed to load conversation %s: %w", conversationKey, err)
+			}
+		}
+	}
+	return nil
+}
+
+// CleanupOldMessages removes messages older than the specified duration
+func (s *MessageStorage) loadConversation(conversationKey string) error {
+	filename := filepath.Join(s.dataDir, fmt.Sprintf("%s.json", conversationKey))
+
+	data, err := os.ReadFile(filename)
+
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
 		}
-		return fmt.Errorf("failed to read data directory: %w", err)
+		return fmt.Errorf("failed to read file: %w", err)
+
 	}
 
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
-			continue
-		}
+	var messages []*message.Message
 
-		filename := filepath.Join(s.dataDir, entry.Name())
-		data, err := os.ReadFile(filename)
-		if err != nil {
-			return fmt.Errorf("failed to read file %s: %w", filename, err)
-		}
-
-		var messages []*message.Message
-		if err := json.Unmarshal(data, &messages); err != nil {
-			return fmt.Errorf("failed to unmarshal file %s: %w", filename, err)
-		}
-
-		key := entry.Name()[:len(entry.Name())-5] // strip .json
-		s.cache[key] = messages
+	if err := json.Unmarshal(data, &messages); err != nil {
+		return fmt.Errorf("failed to unmarshal messages: %w", err)
 	}
 
+	s.cache[conversationKey] = messages
+	return nil
+}
+
+func (s *MessageStorage) CleanupOldMessages(maxAge time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	cutoff := time.Now().Add(-maxAge)
+
+	for key, messages := range s.cache {
+		var keepMessages []*message.Message
+		for _, msg := range messages {
+			if msg.Timestamp.After(cutoff) {
+				keepMessages = append(keepMessages, msg)
+			}
+		}
+
+		if len(keepMessages) != len(messages) {
+			s.cache[key] = keepMessages
+			if err := s.saveToDisk(key); err != nil {
+				return fmt.Errorf("failed to save conversation %s after cleanup: %w", key, err)
+
+			}
+		}
+	}
 	return nil
 }
