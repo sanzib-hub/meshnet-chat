@@ -14,6 +14,7 @@ import (
 
 	"github.com/yourorg/p2p-messenger/internal/app/p2p"
 	"github.com/yourorg/p2p-messenger/internal/config"
+	"github.com/yourorg/p2p-messenger/internal/domain/message"
 )
 
 func main() {
@@ -32,7 +33,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	node, err := p2p.NewNode(ctx, cfg.P2P.Port)
+	node, err := p2p.NewNode(ctx, cfg.P2P.Port, nil)
 
 	if err != nil {
 		log.Fatalf("Failed to create P2P node: %v", err)
@@ -119,7 +120,8 @@ func sendMessage(node *p2p.Node, s1, s2 string) {
 	}
 
 	peerID := peers[peerIndex]
-	if err := node.SendMessage(peerID, s2); err != nil {
+	msg := message.NewMessage(node.ID().String(), peerID.String(), s2)
+	if err := node.SendMessage(peerID, msg); err != nil {
 		fmt.Printf("Failed to send message: %v\n", err)
 		return
 	}

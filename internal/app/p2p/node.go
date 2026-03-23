@@ -2,16 +2,20 @@ package p2p
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	libp2pcrypto "github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	"github.com/libp2p/go-libp2p/core/protocol"
+	libp2pprotocol "github.com/libp2p/go-libp2p/core/protocol"
 	"github.com/libp2p/go-libp2p/p2p/discovery/mdns"
+	"github.com/yourorg/p2p-messenger/internal/domain/message"
+	"github.com/yourorg/p2p-messenger/pkg/protocol"
 )
 
 const (
@@ -23,9 +27,14 @@ const (
 
 type Node struct {
 	host.Host
-	ctx    context.Context
-	cancel context.CancelFunc
-	mdns   mdns.Service
+	ctx            context.Context
+	cancel         context.CancelFunc
+	mdns           mdns.Service
+	messageHandler func(msg *message.Message)
+}
+
+func (n *Node) SetMessageHandler(handler func(msg *message.Message)) {
+	n.messageHandler = handler
 }
 
 type discoveryNotifee struct {
@@ -47,28 +56,35 @@ func (n *discoveryNotifee) HandlePeerFound(pi peer.AddrInfo) {
 	log.Printf("Successfully connected to peer: %s", pi.ID.String())
 }
 
-// NewNode creates a new P2P node with mDNS discovery
-func NewNode(ctx context.Context, port int) (*Node, error) {
+// NewNode creates a new P2P node with mDNS discovery.
+// privKey is optional: pass nil to generate a fresh (non-persistent) key.
+// Use pkg/crypto.LoadOrGenerateKey to obtain a persistent key.
+func NewNode(ctx context.Context, port int, privKey libp2pcrypto.PrivKey) (*Node, error) {
 	nodeCtx, cancel := context.WithCancel(ctx)
 
-	h, err := libp2p.New(
+	opts := []libp2p.Option{
 		libp2p.ListenAddrStrings(fmt.Sprintf("/ip4/0.0.0.0/tcp/%d", port)),
 		libp2p.Ping(false),
-	)
+	}
+	if privKey != nil {
+		opts = append(opts, libp2p.Identity(privKey))
+	}
+
+	h, err := libp2p.New(opts...)
 
 	if err != nil {
 		cancel()
 		return nil, fmt.Errorf("failed to create libp2p host: %w", err)
 
 	}
-	// Set up stream handler for incoming messages
-	h.SetStreamHandler(protocol.ID(ProtocolID), handleStream)
-
 	node := &Node{
 		Host:   h,
 		ctx:    nodeCtx,
 		cancel: cancel,
 	}
+
+	// Set up stream handler for incoming messages
+	h.SetStreamHandler(libp2pprotocol.ID(ProtocolID), node.handleStream)
 
 	if err := node.setupDiscover(); err != nil {
 		h.Close()
@@ -100,38 +116,41 @@ func (n *Node) setupDiscover() error {
 	return nil
 }
 
-func handleStream(s network.Stream) {
-	log.Printf("Received stream from perr: %s", s.Conn().RemotePeer().String())
+func (n *Node) handleStream(s network.Stream) {
+	log.Printf("Received stream from peer: %s", s.Conn().RemotePeer().String())
 
 	defer s.Close()
 
-	buf := make([]byte, 1024)
-
-	n, err := s.Read(buf)
+	envelope, err := protocol.DeserializeEnvelope(s)
 	if err != nil {
-		log.Printf("Error reading from strea,: %v", err)
+		log.Printf("Error reading from stream: %v", err)
+		return
 	}
 
-	message := string(buf[:n])
-	log.Printf("Received message: %s", message)
+	if envelope.Message != nil && n.messageHandler != nil {
+		n.messageHandler(envelope.Message)
+	}
 }
 
-// SendMessage sends a simple message to a peer
-func (n *Node) SendMessage(peerID peer.ID, message string) error {
-	s, err := n.Host.NewStream(n.ctx, peerID, protocol.ID(ProtocolID))
-
+// SendMessage sends a message to a peer
+func (n *Node) SendMessage(peerID peer.ID, msg *message.Message) error {
+	s, err := n.Host.NewStream(n.ctx, peerID, libp2pprotocol.ID(ProtocolID))
 	if err != nil {
 		return fmt.Errorf("failed to open stream to peer %s: %w", peerID.String(), err)
-
 	}
 	defer s.Close()
 
-	_, err = s.Write([]byte(message))
+	envelope := protocol.CreateEnvelop(msg)
+	data, err := envelope.Serialize()
 	if err != nil {
+		return fmt.Errorf("failed to serialize message: %w", err)
+	}
+
+	if err := json.NewEncoder(s).Encode(data); err != nil {
 		return fmt.Errorf("failed to send message: %w", err)
 	}
 
-	log.Printf("Sent message to %s: %s", peerID.String(), message)
+	log.Printf("Sent message to %s: %s", peerID.String(), msg.Content)
 	return nil
 }
 
@@ -149,5 +168,5 @@ func (n *Node) Close() error {
 		}
 	}
 	n.cancel()
-	return  n.Host.Close()
+	return n.Host.Close()
 }

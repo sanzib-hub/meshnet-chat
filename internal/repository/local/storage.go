@@ -28,7 +28,7 @@ func NewMessageStorage(dataDir string) (*MessageStorage, error) {
 	}
 
 	if err := storage.loadFromDisk(); err != nil {
-		return nil, fmt.Errorf("failed to load message from disk: %w", &err)
+		return nil, fmt.Errorf("failed to load messages from disk: %w", err)
 	}
 
 	return storage, nil
@@ -39,87 +39,111 @@ func (s *MessageStorage) StoreMessage(msg *message.Message) error {
 	defer s.mu.Unlock()
 
 	key := s.getConversationKey(msg.SenderID, msg.ReceiverID)
-
 	s.cache[key] = append(s.cache[key], msg)
 
 	sort.Slice(s.cache[key], func(i, j int) bool {
 		return s.cache[key][i].Timestamp.Before(s.cache[key][j].Timestamp)
-
 	})
 
-	return  s.SaveToDisk(key)
+	return s.saveToDisk(key)
 }
 
-
-func(s *MessageStorage) GetMessages(peerID1, peerID2 string, limit int)([]*message.Message, error){
+func (s *MessageStorage) GetMessages(peerID1, peerID2 string, limit int) ([]*message.Message, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	key := s.getConversationKey(peerID1, peerID2)
+	messages := s.cache[key]
 
-	messages:= s.cache[key]
-
-	if limit > 0 && len(messages)> limit{
+	if limit > 0 && len(messages) > limit {
 		start := len(messages) - limit
 		return messages[start:], nil
 	}
 
-	return  messages, nil
+	return messages, nil
 }
 
-
-func (s *MessageStorage) GetRecentMessages(limit int) ([]*message.Message, error){
-	s.mu.Lock()
+func (s *MessageStorage) GetRecentMessages(limit int) ([]*message.Message, error) {
+	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	var allMessages []*message.Message
-	for _, messages := range s.cache{
+	for _, messages := range s.cache {
 		allMessages = append(allMessages, messages...)
 	}
 
 	sort.Slice(allMessages, func(i, j int) bool {
-		return  allMessages[i].Timestamp.After(allMessages[j].Timestamp)
-
+		return allMessages[i].Timestamp.After(allMessages[j].Timestamp)
 	})
 
-	if limit > 0 && len(allMessages) > limit{
+	if limit > 0 && len(allMessages) > limit {
 		return allMessages[:limit], nil
 	}
 
 	return allMessages, nil
 }
 
-
-func (s *MessageStorage) GetConversations() ([]string, error){
-	s.mu.Lock()
+func (s *MessageStorage) GetConversations() ([]string, error) {
+	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	conversations := make([]string, 0, len(s.cache))
-	for key := range s.cache{
+	for key := range s.cache {
 		conversations = append(conversations, key)
 	}
-	return  conversations, nil
+	return conversations, nil
 }
 
-func(s *MessageStorage) getConversationKey(peerID1, peerID2 string) string{
+func (s *MessageStorage) getConversationKey(peerID1, peerID2 string) string {
 	if peerID1 < peerID2 {
-		return fmt.Sprintf("%s_%s", peerID1,peerID2)
+		return fmt.Sprintf("%s_%s", peerID1, peerID2)
 	}
 	return fmt.Sprintf("%s_%s", peerID2, peerID1)
 }
 
-func(s *MessageStorage) saveToDisk(conversationKey string) error{
+func (s *MessageStorage) saveToDisk(conversationKey string) error {
 	messages := s.cache[conversationKey]
-	if len(messages) == 0{
-		return  nil
+	if len(messages) == 0 {
+		return nil
 	}
 
 	filename := filepath.Join(s.dataDir, fmt.Sprintf("%s.json", conversationKey))
-	data, err := json.MarshalIndent(messages,""," ")
-	if err != nil{
+	data, err := json.MarshalIndent(messages, "", "  ")
+	if err != nil {
 		return fmt.Errorf("failed to marshal messages: %w", err)
 	}
 
 	return os.WriteFile(filename, data, 0644)
 }
 
+func (s *MessageStorage) loadFromDisk() error {
+	entries, err := os.ReadDir(s.dataDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("failed to read data directory: %w", err)
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
+			continue
+		}
+
+		filename := filepath.Join(s.dataDir, entry.Name())
+		data, err := os.ReadFile(filename)
+		if err != nil {
+			return fmt.Errorf("failed to read file %s: %w", filename, err)
+		}
+
+		var messages []*message.Message
+		if err := json.Unmarshal(data, &messages); err != nil {
+			return fmt.Errorf("failed to unmarshal file %s: %w", filename, err)
+		}
+
+		key := entry.Name()[:len(entry.Name())-5] // strip .json
+		s.cache[key] = messages
+	}
+
+	return nil
+}

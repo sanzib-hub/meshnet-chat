@@ -3,6 +3,7 @@ package protocol
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/yourorg/p2p-messenger/internal/domain/message"
@@ -65,12 +66,14 @@ func(e *MessageEnvelope) Serialize() ([]byte, error){
 	return json.Marshal(e)
 } 
 
-func DeserializeEnvelope(data []byte) (*MessageEnvelope, error){
+func DeserializeEnvelope(r io.Reader) (*MessageEnvelope, error) {
+	var rawBytes []byte
+	if err := json.NewDecoder(r).Decode(&rawBytes); err != nil {
+		return nil, fmt.Errorf("failed to read envelope bytes: %w", err)
+	}
 	var envelope MessageEnvelope
-
-	err:= json.Unmarshal(data, &envelope)
-	if err != nil{
-		return nil,fmt.Errorf("failed to deserialize message envelope: %w", err)
+	if err := json.Unmarshal(rawBytes, &envelope); err != nil {
+		return nil, fmt.Errorf("failed to deserialize message envelope: %w", err)
 	}
 	return &envelope, nil
 }
