@@ -1,0 +1,83 @@
+# NOTE: mDNS peer discovery does NOT work in Kubernetes (multicast is blocked).
+# For K8s deployments, peer discovery should be replaced with a bootstrap peer
+# list (static addresses) or a DHT-based approach (see pkg/discovery/dht stub).
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: p2p-messenger
+  labels:
+    app: p2p-messenger
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: p2p-messenger
+  template:
+    metadata:
+      labels:
+        app: p2p-messenger
+    spec:
+      containers:
+        - name: server
+          image: p2p-messenger:latest
+          ports:
+            - containerPort: 8080
+              name: http
+            - containerPort: 9000
+              name: p2p
+          env:
+            - name: HTTP_PORT
+              value: "8080"
+            - name: P2P_PORT
+              value: "9000"
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          args:
+            - "--http-port=8080"
+            - "--p2p-port=9000"
+            - "--data-dir=/app/data"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 3
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: p2p-messenger-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: p2p-messenger
+spec:
+  selector:
+    app: p2p-messenger
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+    - name: p2p
+      port: 9000
+      targetPort: 9000
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: p2p-messenger-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
