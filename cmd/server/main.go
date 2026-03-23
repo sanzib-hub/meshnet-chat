@@ -19,7 +19,8 @@ import (
 	"github.com/yourorg/p2p-messenger/internal/middleware"
 	"github.com/yourorg/p2p-messenger/internal/repository/local"
 	"github.com/yourorg/p2p-messenger/internal/service/identity"
-	msgsvc "github.com/yourorg/p2p-messenger/internal/service/messaging"
+	discsvc "github.com/yourorg/p2p-messenger/internal/service/discovery"
+	msgsvc  "github.com/yourorg/p2p-messenger/internal/service/messaging"
 	peersvc "github.com/yourorg/p2p-messenger/internal/service/peer"
 )
 
@@ -67,7 +68,11 @@ func main() {
 
 	// --- Services ---
 	peerService := peersvc.New()
+	discService := discsvc.New(node, peerService)
+	discService.Bootstrap()
+
 	msgService := msgsvc.New(node, storage)
+	msgService.EnableEncryption(idSvc.PrivKey()) // at-rest AES-256-GCM encryption
 
 	// --- WebSocket hub ---
 	hub := wshandler.NewHub(node)
